@@ -285,38 +285,82 @@ jobs:
           retention-days: 30
 
   # ===================================================================
-  # 6. PUBLISH GITHUB RELEASE (MANUAL ONLY)
+  # 6. PUBLISH GITHUB RELEASE
   # ===================================================================
   publish-release:
     name: Publish Official GitHub Release
     needs: [build-windows, build-linux, build-macos, build-android, build-ios]
     if: |
       always() && !cancelled() &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.publish_release == true &&
-      (inputs.only_publish_existing == true || (
-        needs.build-windows.result == 'success' &&
-        needs.build-linux.result == 'success' &&
-        needs.build-macos.result == 'success' &&
-        needs.build-android.result == 'success' &&
+      (
+        (github.event_name == 'push') ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+      ) &&
+      (
+        (github.event_name == 'workflow_dispatch' && inputs.only_publish_existing == true) ||
+        needs.build-windows.result == 'success' ||
+        needs.build-linux.result == 'success' ||
+        needs.build-macos.result == 'success' ||
+        needs.build-android.result == 'success' ||
         needs.build-ios.result == 'success'
-      ))
+      )
     runs-on: ubuntu-latest
     steps:
+      - name: Build Results Summary
+        run: |
+          echo "=== Build Results ==="
+          echo "Windows: ${{ needs.build-windows.result }}"
+          echo "Linux:   ${{ needs.build-linux.result }}"
+          echo "macOS:   ${{ needs.build-macos.result }}"
+          echo "Android: ${{ needs.build-android.result }}"
+          echo "iOS:     ${{ needs.build-ios.result }}"
+          echo ""
+          FAILED=""
+          [ "${{ needs.build-windows.result }}" != "success" ] && FAILED="${FAILED} Windows"
+          [ "${{ needs.build-linux.result }}" != "success" ] && FAILED="${FAILED} Linux"
+          [ "${{ needs.build-macos.result }}" != "success" ] && FAILED="${FAILED} macOS"
+          [ "${{ needs.build-android.result }}" != "success" ] && FAILED="${FAILED} Android"
+          [ "${{ needs.build-ios.result }}" != "success" ] && FAILED="${FAILED} iOS"
+          if [ -n "$FAILED" ]; then
+            echo "::warning::The following platforms failed or were skipped:${FAILED}"
+          else
+            echo "All platforms built successfully!"
+          fi
+
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Determine Release Parameters
+        id: release_params
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.version_tag }}" >> $GITHUB_OUTPUT
+            echo "title=${{ inputs.release_title || inputs.version_tag }}" >> $GITHUB_OUTPUT
+            echo "notes=${{ inputs.release_notes }}" >> $GITHUB_OUTPUT
+            echo "draft=${{ inputs.is_draft }}" >> $GITHUB_OUTPUT
+            echo "prerelease=${{ inputs.is_prerelease }}" >> $GITHUB_OUTPUT
+          else
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            echo "tag=v1.0.0-build.${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "title=ReadNext v1.0.0 (build ${SHORT_SHA})" >> $GITHUB_OUTPUT
+            echo "notes=Automated release from push to main (${GITHUB_SHA})" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Prepare Staging Folders
         run: mkdir -p raw_artifacts release_assets
 
       - name: Download Current Workflow Artifacts
-        if: ${{ !inputs.only_publish_existing }}
+        if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
         uses: actions/download-artifact@v4
         with:
           path: raw_artifacts
+          merge-multiple: false
+        continue-on-error: true
 
       - name: Download Existing Run Artifacts
-        if: ${{ inputs.only_publish_existing }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.only_publish_existing }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CUSTOM_RUN_ID: ${{ inputs.existing_run_id }}
@@ -341,6 +385,15 @@ jobs:
             -name "*.ipa" \
           \) -exec cp -v {} release_assets/ \;
 
+      - name: Verify Release Assets Exist
+        run: |
+          ASSET_COUNT=$(find release_assets -type f ! -name 'SHA256SUMS.txt' | wc -l)
+          echo "Found $ASSET_COUNT release asset(s)"
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "::error::No release assets found. Cannot publish an empty release."
+            exit 1
+          fi
+
       - name: Generate Cryptographic Hashes (SHA-256)
         run: |
           cd release_assets
@@ -355,11 +408,11 @@ jobs:
       - name: Publish Official GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.version_tag }}
-          name: ${{ inputs.release_title || inputs.version_tag }}
-          body: ${{ inputs.release_notes }}
-          draft: ${{ inputs.is_draft }}
-          prerelease: ${{ inputs.is_prerelease }}
+          tag_name: ${{ steps.release_params.outputs.tag }}
+          name: ${{ steps.release_params.outputs.title }}
+          body: ${{ steps.release_params.outputs.notes }}
+          draft: ${{ steps.release_params.outputs.draft }}
+          prerelease: ${{ steps.release_params.outputs.prerelease }}
           files: release_assets/*
           generate_release_notes: false
         env:
