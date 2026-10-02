@@ -1,0 +1,236 @@
+name: Multi-Platform Automated Build & Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ===================================================================
+  # 1. WINDOWS BUILD (Inno Setup .exe Installer + Portable ZIP)
+  # ===================================================================
+  build-windows:
+    name: Build Windows (.exe & .zip)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress
+
+      - name: Verify Environment
+        run: flutter doctor -v
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Run Test Suite
+        run: flutter test
+
+      - name: Build Windows Application (Release)
+        run: flutter build windows --release
+
+      - name: Compile Inno Setup Windows Installer (.exe)
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/inno_setup.iss
+
+      - name: Package Portable Windows Archive (.zip)
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath build\windows\installer\ReadNext-Windows-Portable.zip -Force
+
+      - name: Upload Windows Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readnext-windows-build
+          path: build/windows/installer/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===================================================================
+  # 2. LINUX BUILD (.deb Package + Portable .tar.gz)
+  # ===================================================================
+  build-linux:
+    name: Build Linux (.deb & .tar.gz)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Environment
+        run: flutter doctor -v
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Run Test Suite
+        run: flutter test
+
+      - name: Build Linux Application (Release)
+        run: flutter build linux --release
+
+      - name: Package Linux (.deb & .tar.gz)
+        run: |
+          chmod +x packaging/linux/build_deb.sh
+          bash packaging/linux/build_deb.sh "1.0.0" "build/linux/x64/release/bundle"
+
+      - name: Upload Linux Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readnext-linux-build
+          path: build/linux/installer/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===================================================================
+  # 3. macOS BUILD (.dmg Disk Image & .zip Application)
+  # ===================================================================
+  build-macos:
+    name: Build macOS (.dmg & .zip)
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Environment
+        run: flutter doctor -v
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Run Test Suite
+        run: flutter test
+
+      - name: Build macOS Application (Release)
+        run: flutter build macos --release
+
+      - name: Create macOS Installer (.dmg & .zip)
+        run: |
+          mkdir -p build/macos/installer
+          hdiutil create -volname "ReadNext" -srcfolder "build/macos/Build/Products/Release/read_next.app" -ov -format UDZO "build/macos/installer/ReadNext-macOS.dmg"
+          cd build/macos/Build/Products/Release
+          zip -r -y ../../../installer/ReadNext-macOS.zip read_next.app
+
+      - name: Upload macOS Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readnext-macos-build
+          path: build/macos/installer/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===================================================================
+  # 4. ANDROID BUILD (.apk Package)
+  # ===================================================================
+  build-android:
+    name: Build Android (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Environment
+        run: flutter doctor -v
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Run Test Suite
+        run: flutter test
+
+      - name: Build Android APK (Release)
+        run: flutter build apk --release
+
+      - name: Stage Android Artifact
+        run: |
+          mkdir -p build/android/installer
+          cp build/app/outputs/flutter-apk/app-release.apk build/android/installer/ReadNext-Android.apk
+
+      - name: Upload Android Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readnext-android-build
+          path: build/android/installer/*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ===================================================================
+  # 5. iOS BUILD (.ipa Package)
+  # ===================================================================
+  build-ios:
+    name: Build iOS (.ipa)
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Environment
+        run: flutter doctor -v
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build iOS Application (Release, Unsigned)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package iOS Payload (.ipa)
+        run: |
+          mkdir -p build/ios/installer/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ios/installer/Payload/
+          cd build/ios/installer
+          zip -r -y ReadNext-iOS-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload iOS Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readnext-ios-build
+          path: build/ios/installer/*
+          if-no-files-found: error
+          retention-days: 30

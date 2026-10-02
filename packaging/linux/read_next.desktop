@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ReadNext
+GenericName=PDF Reader & Utility Suite
+Comment=Advanced enterprise PDF reader, annotation editor, and document utility suite
+Exec=read_next %U
+Icon=read_next
+Terminal=false
+StartupNotify=true
+Categories=Office;Viewer;Graphics;Publishing;
+MimeType=application/pdf;application/x-pdf;
+Keywords=PDF;Reader;Viewer;Annotate;Convert;Merge;Split;OCR;
