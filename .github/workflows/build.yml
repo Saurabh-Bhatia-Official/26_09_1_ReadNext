@@ -1,15 +1,70 @@
-name: Multi-Platform Automated Build & Test
+name: Multi-Platform Build & Release
 
 on:
   push:
     branches: [ main ]
     paths-ignore:
       - '**.md'
-      - '.github/workflows/release.yml'
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish official GitHub Release (Manual only)'
+        required: true
+        type: boolean
+        default: false
+      version_tag:
+        description: 'Release Version Tag (e.g. v1.0.0)'
+        required: false
+        type: string
+        default: 'v1.0.0'
+      release_title:
+        description: 'Release Title'
+        required: false
+        type: string
+        default: 'ReadNext Official Release'
+      release_notes:
+        description: 'Changelog / Release Notes'
+        required: false
+        type: string
+        default: |
+          ### ReadNext - Smart PDF Reader & Annotation Suite
+
+          #### Highlights
+          - **Smart PDF Reader & Viewer**: Smooth scrolling, page jump, fit-width/height, zoom controls.
+          - **All-in-One PDF Tool Hub**: Convert, merge, split, compress, watermark, protect, unlock, and manage pages.
+          - **Offline Neural OCR**: Extract text and generate searchable PDFs locally.
+          - **Cross-Platform Availability**: Windows, Linux, macOS, Android, and iOS.
+
+          #### Downloads
+          - **Windows**: `ReadNext-Setup-v1.0.0.exe` (Inno Setup wizard installer) or portable `.zip`
+          - **Linux**: `ReadNext-v1.0.0-Linux-x64.deb` or portable `.tar.gz`
+          - **macOS**: `ReadNext-macOS.dmg` or portable `.zip`
+          - **Android**: `ReadNext-Android.apk`
+          - **iOS**: `ReadNext-iOS-unsigned.ipa`
+      only_publish_existing:
+        description: 'Publish from existing build artifacts (skips rebuilding)'
+        required: false
+        type: boolean
+        default: false
+      existing_run_id:
+        description: 'Run ID to release (if skipping rebuild, leave blank for latest main build)'
+        required: false
+        type: string
+        default: ''
+      is_draft:
+        description: 'Create as Draft Release'
+        required: true
+        type: boolean
+        default: false
+      is_prerelease:
+        description: 'Mark as Pre-release / Beta'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
   # ===================================================================
@@ -17,6 +72,7 @@ jobs:
   # ===================================================================
   build-windows:
     name: Build Windows (.exe & .zip)
+    if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
     runs-on: windows-latest
     steps:
       - name: Checkout Repository
@@ -64,6 +120,7 @@ jobs:
   # ===================================================================
   build-linux:
     name: Build Linux (.deb & .tar.gz)
+    if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -110,6 +167,7 @@ jobs:
   # ===================================================================
   build-macos:
     name: Build macOS (.dmg & .zip)
+    if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
     runs-on: macos-14
     steps:
       - name: Checkout Repository
@@ -153,6 +211,7 @@ jobs:
   # ===================================================================
   build-android:
     name: Build Android (.apk)
+    if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -200,6 +259,7 @@ jobs:
   # ===================================================================
   build-ios:
     name: Build iOS (.ipa)
+    if: ${{ github.event_name == 'push' || !inputs.only_publish_existing }}
     runs-on: macos-14
     steps:
       - name: Checkout Repository
@@ -235,3 +295,84 @@ jobs:
           path: build/ios/installer/*
           if-no-files-found: error
           retention-days: 30
+
+  # ===================================================================
+  # 6. PUBLISH GITHUB RELEASE (MANUAL ONLY)
+  # ===================================================================
+  publish-release:
+    name: Publish Official GitHub Release
+    needs: [build-windows, build-linux, build-macos, build-android, build-ios]
+    if: |
+      always() && !cancelled() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_release == true &&
+      (inputs.only_publish_existing == true || (
+        needs.build-windows.result == 'success' &&
+        needs.build-linux.result == 'success' &&
+        needs.build-macos.result == 'success' &&
+        needs.build-android.result == 'success' &&
+        needs.build-ios.result == 'success'
+      ))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Prepare Staging Folders
+        run: mkdir -p raw_artifacts release_assets
+
+      - name: Download Current Workflow Artifacts
+        if: ${{ !inputs.only_publish_existing }}
+        uses: actions/download-artifact@v4
+        with:
+          path: raw_artifacts
+
+      - name: Download Existing Run Artifacts
+        if: ${{ inputs.only_publish_existing }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_RUN_ID: ${{ inputs.existing_run_id }}
+        run: |
+          if [ -n "$CUSTOM_RUN_ID" ]; then
+            TARGET_RUN="$CUSTOM_RUN_ID"
+          else
+            TARGET_RUN=$(gh run list --workflow="build.yml" --branch=main --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+          fi
+          echo "Downloading artifacts from run $TARGET_RUN..."
+          gh run download "$TARGET_RUN" --dir raw_artifacts
+
+      - name: Organize Release Binaries
+        run: |
+          find raw_artifacts -type f \( \
+            -name "*.exe" -o \
+            -name "*.zip" -o \
+            -name "*.deb" -o \
+            -name "*.tar.gz" -o \
+            -name "*.dmg" -o \
+            -name "*.apk" -o \
+            -name "*.ipa" \
+          \) -exec cp -v {} release_assets/ \;
+
+      - name: Generate Cryptographic Hashes (SHA-256)
+        run: |
+          cd release_assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: List Release Packages
+        run: |
+          echo "=== Release Assets to Publish ==="
+          ls -lh release_assets/
+
+      - name: Publish Official GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version_tag }}
+          name: ${{ inputs.release_title || inputs.version_tag }}
+          body: ${{ inputs.release_notes }}
+          draft: ${{ inputs.is_draft }}
+          prerelease: ${{ inputs.is_prerelease }}
+          files: release_assets/*
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
