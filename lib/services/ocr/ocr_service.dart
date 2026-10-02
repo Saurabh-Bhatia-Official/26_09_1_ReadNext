@@ -219,111 +219,122 @@ class OcrService {
   }) async {
     final pwDoc = pw.Document();
 
-    try {
-      final doc = await pfx.PdfDocument.openData(originalBytes);
-      final total = doc.pagesCount;
+    final isPdf = originalBytes.length >= 4 &&
+        originalBytes[0] == 0x25 && // %
+        originalBytes[1] == 0x50 && // P
+        originalBytes[2] == 0x44 && // D
+        originalBytes[3] == 0x46;   // F
 
-      for (int p = 1; p <= total; p++) {
-        final page = await doc.getPage(p);
-        final img = await page.render(
-          width: page.width * 2.0,
-          height: page.height * 2.0,
-          format: pfx.PdfPageImageFormat.png,
-        );
-        await page.close();
+    if (isPdf) {
+      try {
+        final doc = await pfx.PdfDocument.openData(originalBytes);
+        final total = doc.pagesCount;
 
-        final ocrResult = ocrResults.firstWhere(
-          (r) => r.pageNumber == p,
-          orElse: () => const OcrPageResult(
-            pageNumber: 1,
-            extractedText: '',
-            confidence: 1.0,
-            language: OcrLanguage.english,
-            lines: [],
-          ),
-        );
-
-        if (img != null) {
-          pwDoc.addPage(
-            pw.Page(
-              pageFormat: pw_pdf.PdfPageFormat(page.width, page.height),
-              margin: pw.EdgeInsets.zero,
-              build: (context) {
-                return pw.Stack(
-                  children: [
-                    pw.FullPage(
-                      ignoreMargins: true,
-                      child: pw.Image(pw.MemoryImage(img.bytes), fit: pw.BoxFit.fill),
-                    ),
-                    // Invisible selectable text layer
-                    pw.Positioned.fill(
-                      child: pw.Opacity(
-                        opacity: 0.01,
-                        child: pw.Padding(
-                          padding: const pw.EdgeInsets.all(24),
-                          child: pw.Column(
-                            crossAxisAlignment: pw.CrossAxisAlignment.start,
-                            children: ocrResult.lines.map((l) => pw.Text(l)).toList(),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
+        for (int p = 1; p <= total; p++) {
+          final page = await doc.getPage(p);
+          final img = await page.render(
+            width: page.width * 2.0,
+            height: page.height * 2.0,
+            format: pfx.PdfPageImageFormat.png,
           );
-        }
+          await page.close();
 
-        if (onProgress != null) onProgress(p / total);
-      }
-
-      await doc.close();
-      return await pwDoc.save();
-    } catch (_) {
-      // originalBytes was an image (PNG/JPG)
-      final ocrResult = ocrResults.isNotEmpty
-          ? ocrResults.first
-          : const OcrPageResult(
+          final ocrResult = ocrResults.firstWhere(
+            (r) => r.pageNumber == p,
+            orElse: () => const OcrPageResult(
               pageNumber: 1,
               extractedText: '',
               confidence: 1.0,
               language: OcrLanguage.english,
               lines: [],
-            );
+            ),
+          );
 
-      pwDoc.addPage(
-        pw.Page(
-          pageFormat: pw_pdf.PdfPageFormat.a4,
-          margin: pw.EdgeInsets.zero,
-          build: (context) {
-            return pw.Stack(
-              children: [
+          if (img != null) {
+            pwDoc.addPage(
+              pw.Page(
+                pageFormat: pw_pdf.PdfPageFormat(page.width, page.height),
+                margin: pw.EdgeInsets.zero,
+                build: (context) {
+                  return pw.Stack(
+                    children: [
+                      pw.FullPage(
+                        ignoreMargins: true,
+                        child: pw.Image(pw.MemoryImage(img.bytes), fit: pw.BoxFit.fill),
+                      ),
+                      // Invisible selectable text layer
+                      pw.Positioned.fill(
+                        child: pw.Opacity(
+                          opacity: 0.01,
+                          child: pw.Padding(
+                            padding: const pw.EdgeInsets.all(24),
+                            child: pw.Column(
+                              crossAxisAlignment: pw.CrossAxisAlignment.start,
+                              children: ocrResult.lines.map((l) => pw.Text(l)).toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            );
+          }
+
+          if (onProgress != null) onProgress(p / total);
+        }
+
+        await doc.close();
+        return await pwDoc.save();
+      } catch (_) {
+        // Fallback for headless environments or unparseable raster layers
+      }
+    }
+
+    // Input is an image (PNG/JPG) or PDF fallback
+    final ocrResult = ocrResults.isNotEmpty
+        ? ocrResults.first
+        : const OcrPageResult(
+            pageNumber: 1,
+            extractedText: '',
+            confidence: 1.0,
+            language: OcrLanguage.english,
+            lines: [],
+          );
+
+    pwDoc.addPage(
+      pw.Page(
+        pageFormat: pw_pdf.PdfPageFormat.a4,
+        margin: pw.EdgeInsets.zero,
+        build: (context) {
+          return pw.Stack(
+            children: [
+              if (!isPdf)
                 pw.FullPage(
                   ignoreMargins: true,
                   child: pw.Image(pw.MemoryImage(originalBytes), fit: pw.BoxFit.contain),
                 ),
-                pw.Positioned.fill(
-                  child: pw.Opacity(
-                    opacity: 0.01,
-                    child: pw.Padding(
-                      padding: const pw.EdgeInsets.all(24),
-                      child: pw.Column(
-                        crossAxisAlignment: pw.CrossAxisAlignment.start,
-                        children: ocrResult.lines.map((l) => pw.Text(l)).toList(),
-                      ),
+              pw.Positioned.fill(
+                child: pw.Opacity(
+                  opacity: 0.01,
+                  child: pw.Padding(
+                    padding: const pw.EdgeInsets.all(24),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: ocrResult.lines.map((l) => pw.Text(l)).toList(),
                     ),
                   ),
                 ),
-              ],
-            );
-          },
-        ),
-      );
+              ),
+            ],
+          );
+        },
+      ),
+    );
 
-      if (onProgress != null) onProgress(1.0);
-      return await pwDoc.save();
-    }
+    if (onProgress != null) onProgress(1.0);
+    return await pwDoc.save();
   }
 
   /// Runs Windows 10/11 native neural OCR engine (Windows.Media.Ocr) locally and offline.
