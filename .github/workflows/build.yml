@@ -180,9 +180,11 @@ jobs:
       - name: Create macOS Installer (.dmg & .zip)
         run: |
           mkdir -p build/macos/installer
-          hdiutil create -volname "ReadNext" -srcfolder "build/macos/Build/Products/Release/read_next.app" -ov -format UDZO "build/macos/installer/ReadNext-macOS.dmg"
+          echo "=== Listing build output ==="
+          ls -la build/macos/Build/Products/Release/
+          hdiutil create -volname "ReadNext" -srcfolder "build/macos/Build/Products/Release/ReadNext.app" -ov -format UDZO "build/macos/installer/ReadNext-macOS.dmg"
           cd build/macos/Build/Products/Release
-          zip -r -y ../../../installer/ReadNext-macOS.zip read_next.app
+          zip -r -y ../../../installer/ReadNext-macOS.zip ReadNext.app
 
       - name: Upload macOS Build Artifacts
         uses: actions/upload-artifact@v4
