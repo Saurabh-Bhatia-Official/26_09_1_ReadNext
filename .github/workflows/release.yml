@@ -1,10 +1,10 @@
-name: Manual Multi-Platform Release
+name: Release Builds
 
 on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'Release Tag Version (e.g. v1.0.0)'
+        description: 'Release Version Tag (e.g. v1.0.0)'
         required: true
         type: string
         default: 'v1.0.0'
@@ -12,14 +12,33 @@ on:
         description: 'Release Title'
         required: false
         type: string
-        default: 'ReadNext Official Release'
+        default: 'ReadNext v1.0.0 - Production Release'
       release_notes:
-        description: 'Release Changelog / Notes'
+        description: 'Changelog / Release Notes'
         required: false
         type: string
-        default: 'Production release of ReadNext - Smart PDF Reader & Utility Suite.'
+        default: |
+          ### ReadNext - Smart PDF Reader & Annotation Suite
+
+          #### Highlights
+          - **Smart PDF Reader & Viewer**: Smooth scrolling, page jump, fit-width/height, zoom controls.
+          - **All-in-One PDF Tool Hub**: Convert, merge, split, compress, watermark, protect, unlock, and manage pages.
+          - **Offline Neural OCR**: Extract text and generate searchable PDFs locally.
+          - **Cross-Platform Availability**: Windows, Linux, macOS, Android, and iOS.
+
+          #### Downloads
+          - **Windows**: `ReadNext-Setup-v1.0.0.exe` (Next -> Next -> Finish installer wizard) or portable `.zip`
+          - **Linux**: `ReadNext-v1.0.0-Linux-x64.deb` or portable `.tar.gz`
+          - **macOS**: `ReadNext-macOS.dmg` or portable `.zip`
+          - **Android**: `ReadNext-Android.apk`
+          - **iOS**: `ReadNext-iOS-unsigned.ipa`
+      run_id:
+        description: 'Workflow Run ID to Release (leave blank to release latest successful build on main)'
+        required: false
+        type: string
+        default: ''
       is_draft:
-        description: 'Create as Draft Release (Review before publishing)'
+        description: 'Save as Draft Release (Review in GitHub before publishing)'
         required: true
         type: boolean
         default: false
@@ -28,287 +47,71 @@ on:
         required: true
         type: boolean
         default: false
-      include_windows:
-        description: 'Include Windows (.exe installer & portable .zip)'
-        required: true
-        type: boolean
-        default: true
-      include_linux:
-        description: 'Include Linux (.deb package & portable .tar.gz)'
-        required: true
-        type: boolean
-        default: true
-      include_macos:
-        description: 'Include macOS (.dmg disk image & .zip)'
-        required: true
-        type: boolean
-        default: true
-      include_android:
-        description: 'Include Android (.apk)'
-        required: true
-        type: boolean
-        default: true
-      include_ios:
-        description: 'Include iOS (.ipa)'
-        required: true
-        type: boolean
-        default: true
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
-  # ===================================================================
-  # 1. WINDOWS RELEASE BUILD
-  # ===================================================================
-  build-windows:
-    name: Build Windows Release
-    if: ${{ inputs.include_windows }}
-    runs-on: windows-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build Windows Application (Release)
-        run: flutter build windows --release
-
-      - name: Compile Inno Setup Windows Installer (.exe)
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/inno_setup.iss
-
-      - name: Package Portable Windows Archive (.zip)
-        run: |
-          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath build\windows\installer\ReadNext-Windows-Portable.zip -Force
-
-      - name: Upload Windows Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-windows
-          path: build/windows/installer/*
-          if-no-files-found: error
-
-  # ===================================================================
-  # 2. LINUX RELEASE BUILD
-  # ===================================================================
-  build-linux:
-    name: Build Linux Release
-    if: ${{ inputs.include_linux }}
+  release:
+    name: Release Builds to GitHub
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Linux Build Dependencies
+      - name: Resolve Build Run ID
+        id: resolve-run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CUSTOM_RUN_ID: ${{ inputs.run_id }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          if [ -n "$CUSTOM_RUN_ID" ]; then
+            echo "Using user-specified Run ID: $CUSTOM_RUN_ID"
+            echo "run_id=$CUSTOM_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "Searching for latest successful build on main..."
+            LATEST_RUN_ID=$(gh run list --workflow="build.yml" --branch=main --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+            if [ -z "$LATEST_RUN_ID" ] || [ "$LATEST_RUN_ID" = "null" ]; then
+              echo "Error: No successful build found on main branch."
+              exit 1
+            fi
+            echo "Found latest successful build Run ID: $LATEST_RUN_ID"
+            echo "run_id=$LATEST_RUN_ID" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build Linux Application (Release)
-        run: flutter build linux --release
-
-      - name: Package Linux (.deb & .tar.gz)
+      - name: Download Build Artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_RUN_ID: ${{ steps.resolve-run.outputs.run_id }}
         run: |
-          chmod +x packaging/linux/build_deb.sh
-          bash packaging/linux/build_deb.sh "${{ inputs.version_tag }}" "build/linux/x64/release/bundle"
+          mkdir -p raw_artifacts release_assets
+          echo "Downloading artifacts from run $TARGET_RUN_ID..."
+          gh run download "$TARGET_RUN_ID" --dir raw_artifacts
 
-      - name: Upload Linux Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-linux
-          path: build/linux/installer/*
-          if-no-files-found: error
+          echo "Organizing build packages into release_assets directory..."
+          find raw_artifacts -type f \( \
+            -name "*.exe" -o \
+            -name "*.zip" -o \
+            -name "*.deb" -o \
+            -name "*.tar.gz" -o \
+            -name "*.dmg" -o \
+            -name "*.apk" -o \
+            -name "*.ipa" \
+          \) -exec cp -v {} release_assets/ \;
 
-  # ===================================================================
-  # 3. macOS RELEASE BUILD
-  # ===================================================================
-  build-macos:
-    name: Build macOS Release
-    if: ${{ inputs.include_macos }}
-    runs-on: macos-14
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build macOS Application (Release)
-        run: flutter build macos --release
-
-      - name: Create macOS Installer (.dmg & .zip)
+      - name: Generate Checksums (SHA-256)
         run: |
-          mkdir -p build/macos/installer
-          hdiutil create -volname "ReadNext" -srcfolder "build/macos/Build/Products/Release/read_next.app" -ov -format UDZO "build/macos/installer/ReadNext-macOS.dmg"
-          cd build/macos/Build/Products/Release
-          zip -r -y ../../../installer/ReadNext-macOS.zip read_next.app
+          cd release_assets
+          echo "Generating SHA256SUMS.txt for release assets..."
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
-      - name: Upload macOS Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-macos
-          path: build/macos/installer/*
-          if-no-files-found: error
-
-  # ===================================================================
-  # 4. ANDROID RELEASE BUILD
-  # ===================================================================
-  build-android:
-    name: Build Android Release
-    if: ${{ inputs.include_android }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build Android APK (Release)
-        run: flutter build apk --release
-
-      - name: Stage Android Artifact
+      - name: Display Release Files
         run: |
-          mkdir -p build/android/installer
-          cp build/app/outputs/flutter-apk/app-release.apk build/android/installer/ReadNext-Android.apk
-
-      - name: Upload Android Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-android
-          path: build/android/installer/*
-          if-no-files-found: error
-
-  # ===================================================================
-  # 5. iOS RELEASE BUILD
-  # ===================================================================
-  build-ios:
-    name: Build iOS Release
-    if: ${{ inputs.include_ios }}
-    runs-on: macos-14
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
-
-      - name: Install Dependencies
-        run: flutter pub get
-
-      - name: Build iOS Application (Release, Unsigned)
-        run: flutter build ios --release --no-codesign
-
-      - name: Package iOS Payload (.ipa)
-        run: |
-          mkdir -p build/ios/installer/Payload
-          cp -r build/ios/iphoneos/Runner.app build/ios/installer/Payload/
-          cd build/ios/installer
-          zip -r -y ReadNext-iOS-unsigned.ipa Payload
-          rm -rf Payload
-
-      - name: Upload iOS Release Assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-ios
-          path: build/ios/installer/*
-          if-no-files-found: error
-
-  # ===================================================================
-  # 6. CREATE GITHUB RELEASE & ATTACH SELECTED PACKAGES
-  # ===================================================================
-  publish-release:
-    name: Publish GitHub Release
-    needs: [build-windows, build-linux, build-macos, build-android, build-ios]
-    if: always() && !cancelled()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Create Assets Staging Directory
-        run: mkdir -p release_staging
-
-      - name: Download Windows Artifacts
-        if: ${{ inputs.include_windows }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-windows
-          path: release_staging/
-
-      - name: Download Linux Artifacts
-        if: ${{ inputs.include_linux }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-linux
-          path: release_staging/
-
-      - name: Download macOS Artifacts
-        if: ${{ inputs.include_macos }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-macos
-          path: release_staging/
-
-      - name: Download Android Artifacts
-        if: ${{ inputs.include_android }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-android
-          path: release_staging/
-
-      - name: Download iOS Artifacts
-        if: ${{ inputs.include_ios }}
-        uses: actions/download-artifact@v4
-        with:
-          name: release-ios
-          path: release_staging/
-
-      - name: List Release Files
-        run: |
-          echo "Files to attach to GitHub Release:"
-          ls -lh release_staging/
+          echo "=== Files to be attached to GitHub Release ==="
+          ls -lh release_assets/
 
       - name: Publish Official GitHub Release
         uses: softprops/action-gh-release@v2
@@ -318,7 +121,7 @@ jobs:
           body: ${{ inputs.release_notes }}
           draft: ${{ inputs.is_draft }}
           prerelease: ${{ inputs.is_prerelease }}
-          files: release_staging/*
-          generate_release_notes: true
+          files: release_assets/*
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

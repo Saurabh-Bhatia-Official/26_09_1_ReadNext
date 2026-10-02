@@ -3,6 +3,9 @@ name: Multi-Platform Automated Build & Test
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
 
 permissions:
