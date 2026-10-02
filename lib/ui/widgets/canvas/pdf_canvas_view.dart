@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../../../data/models/annotation_model.dart';
+import '../../../services/pdf/pdf_converter_service.dart';
 import '../../../state/annotation_provider.dart';
 import '../../../state/document_provider.dart';
 import '../../../state/navigation_provider.dart';
@@ -23,9 +24,14 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
   final Map<int, Uint8List?> _pageRenderCache = {};
   final Map<int, Uint8List> _lastRenderedPage = {};
   final Map<int, Size> _pageDimensionsCache = {};
+  final Map<int, String> _pageTextCache = {};
+  final Map<int, List<PdfTextLine>> _pageLinesCache = {};
+  int? _hoveredPage;
+  PointerDeviceKind _lastPointerKind = PointerDeviceKind.mouse;
   String? _activeDocKey;
   double? _lastUpscaleFactor;
   double? _previousScale;
+  double _basePinchScale = 1.0;
   int? _lastPage;
 
   // For active drawing
@@ -40,7 +46,7 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
     super.dispose();
   }
 
-  void _prefetchDimensions(DocumentState docState) {
+  void _prefetchPageData(DocumentState docState) {
     if (!docState.hasDocument) return;
     for (int p = 1; p <= docState.engine.pageCount; p++) {
       if (!_pageDimensionsCache.containsKey(p)) {
@@ -48,6 +54,22 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
           if (mounted && _pageDimensionsCache[p] != size) {
             setState(() {
               _pageDimensionsCache[p] = size;
+            });
+          }
+        });
+      }
+      if (!_pageTextCache.containsKey(p)) {
+        docState.engine.extractText(p).then((text) {
+          if (mounted && _pageTextCache[p] != text) {
+            setState(() {
+              _pageTextCache[p] = text;
+            });
+          }
+        });
+        docState.engine.extractPageLines(p).then((lines) {
+          if (mounted && lines.isNotEmpty) {
+            setState(() {
+              _pageLinesCache[p] = lines;
             });
           }
         });
@@ -69,13 +91,15 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
       _pageRenderCache.clear();
       _lastRenderedPage.clear();
       _pageDimensionsCache.clear();
+      _pageTextCache.clear();
+      _pageLinesCache.clear();
       _activeDocKey = currentDocKey;
       _previousScale = null;
       _lastPage = null;
     }
 
     if (docState.hasDocument) {
-      _prefetchDimensions(docState);
+      _prefetchPageData(docState);
     }
 
     // Invalidate render cache when upscale factor changes so pages re-render in super-clarity
@@ -171,9 +195,36 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
         }
 
         return Listener(
+          onPointerDown: (e) {
+            _lastPointerKind = e.kind;
+          },
+          onPointerPanZoomStart: (e) {
+            _basePinchScale = effectiveScale;
+          },
+          onPointerPanZoomUpdate: (e) {
+            // Precision Touchpad (Trackpad) gestures on Windows / macOS / Linux:
+            if (e.scale != 1.0) {
+              // 2-finger touchpad pinch to zoom
+              final targetZoom = (_basePinchScale * e.scale).clamp(0.25, 5.0);
+              ref.read(zoomProvider.notifier).setZoom(targetZoom);
+            } else {
+              // 2-finger touchpad panning / smooth scrolling
+              if (_verticalScrollController.hasClients && e.panDelta.dy.abs() > 0) {
+                final newY = (_verticalScrollController.offset - e.panDelta.dy)
+                    .clamp(0.0, _verticalScrollController.position.maxScrollExtent);
+                _verticalScrollController.jumpTo(newY);
+              }
+              if (_horizontalScrollController.hasClients && e.panDelta.dx.abs() > 0) {
+                final newX = (_horizontalScrollController.offset - e.panDelta.dx)
+                    .clamp(0.0, _horizontalScrollController.position.maxScrollExtent);
+                _horizontalScrollController.jumpTo(newX);
+              }
+            }
+          },
           onPointerSignal: (pointerSignal) {
             if (pointerSignal is PointerScrollEvent) {
               if (HardwareKeyboard.instance.isControlPressed) {
+                // Ctrl + Touchpad scroll / Mouse wheel -> Zoom
                 if (pointerSignal.scrollDelta.dy < 0) {
                   ref.read(zoomProvider.notifier).zoomIn();
                 } else if (pointerSignal.scrollDelta.dy > 0) {
@@ -186,40 +237,62 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
                       .clamp(0.0, _horizontalScrollController.position.maxScrollExtent);
                   _horizontalScrollController.jumpTo(newOffset);
                 }
-              } else if (pointerSignal.scrollDelta.dx.abs() > 0) {
-                // Horizontal trackpad / tilt wheel
-                if (_horizontalScrollController.hasClients) {
-                  final newOffset = (_horizontalScrollController.offset + pointerSignal.scrollDelta.dx)
+              } else {
+                // Touchpad 2-finger scroll and Mouse wheel
+                if (_verticalScrollController.hasClients && pointerSignal.scrollDelta.dy.abs() > 0) {
+                  final newY = (_verticalScrollController.offset + pointerSignal.scrollDelta.dy)
+                      .clamp(0.0, _verticalScrollController.position.maxScrollExtent);
+                  _verticalScrollController.jumpTo(newY);
+                }
+                if (_horizontalScrollController.hasClients && pointerSignal.scrollDelta.dx.abs() > 0) {
+                  final newX = (_horizontalScrollController.offset + pointerSignal.scrollDelta.dx)
                       .clamp(0.0, _horizontalScrollController.position.maxScrollExtent);
-                  _horizontalScrollController.jumpTo(newOffset);
+                  _horizontalScrollController.jumpTo(newX);
                 }
               }
             }
           },
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onPanUpdate: annoState.activeTool == AnnotationTool.select
-                ? (details) {
-                    if (_horizontalScrollController.hasClients) {
-                      final newX = (_horizontalScrollController.offset - details.delta.dx)
-                          .clamp(0.0, _horizontalScrollController.position.maxScrollExtent);
-                      _horizontalScrollController.jumpTo(newX);
-                    }
-                    if (_verticalScrollController.hasClients) {
-                      final newY = (_verticalScrollController.offset - details.delta.dy)
-                          .clamp(0.0, _verticalScrollController.position.maxScrollExtent);
-                      _verticalScrollController.jumpTo(newY);
-                    }
-                  }
-                : null,
+            onScaleStart: (details) {
+              _basePinchScale = effectiveScale;
+            },
+            onScaleUpdate: (details) {
+              if (details.pointerCount >= 2) {
+                // Multi-finger pinch-to-zoom on touch screens & tablets
+                final targetZoom = (_basePinchScale * details.scale).clamp(0.25, 5.0);
+                ref.read(zoomProvider.notifier).setZoom(targetZoom);
+              } else if (annoState.activeTool == AnnotationTool.select &&
+                  (_lastPointerKind == PointerDeviceKind.touch || _lastPointerKind == PointerDeviceKind.trackpad)) {
+                // Single-finger touch pan / scroll on touch screen / mobile / tablet
+                if (_horizontalScrollController.hasClients) {
+                  final newX = (_horizontalScrollController.offset - details.focalPointDelta.dx)
+                      .clamp(0.0, _horizontalScrollController.position.maxScrollExtent);
+                  _horizontalScrollController.jumpTo(newX);
+                }
+                if (_verticalScrollController.hasClients) {
+                  final newY = (_verticalScrollController.offset - details.focalPointDelta.dy)
+                      .clamp(0.0, _verticalScrollController.position.maxScrollExtent);
+                  _verticalScrollController.jumpTo(newY);
+                }
+              }
+            },
+            onDoubleTap: () {
+              // Quick double-tap zoom toggle for mobile / tablet touch devices
+              if (effectiveScale > 1.25) {
+                ref.read(zoomProvider.notifier).setFitMode(FitMode.fitWidth);
+              } else {
+                ref.read(zoomProvider.notifier).setZoom(1.8);
+              }
+            },
             child: Container(
               color: theme.scaffoldBackgroundColor,
               child: ScrollbarTheme(
                 data: ScrollbarThemeData(
-                  thumbVisibility: const WidgetStatePropertyAll<bool>(true),
-                  trackVisibility: const WidgetStatePropertyAll<bool>(true),
-                  thickness: const WidgetStatePropertyAll<double>(10.0),
-                  radius: const Radius.circular(5.0),
+                  thumbVisibility: const WidgetStatePropertyAll<bool>(false),
+                  trackVisibility: const WidgetStatePropertyAll<bool>(false),
+                  thickness: const WidgetStatePropertyAll<double>(8.0),
+                  radius: const Radius.circular(4.0),
                   thumbColor: WidgetStateProperty.resolveWith<Color>((states) {
                     if (states.contains(WidgetState.dragged)) {
                       return theme.colorScheme.primary;
@@ -236,37 +309,29 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
                 ),
                 child: Scrollbar(
                   controller: _verticalScrollController,
-                  thumbVisibility: true,
-                  trackVisibility: true,
                   notificationPredicate: (notif) => notif.metrics.axis == Axis.vertical,
-                  child: Scrollbar(
-                    controller: _horizontalScrollController,
-                    thumbVisibility: true,
-                    trackVisibility: true,
-                    notificationPredicate: (notif) => notif.metrics.axis == Axis.horizontal,
+                  child: SingleChildScrollView(
+                    controller: _verticalScrollController,
+                    scrollDirection: Axis.vertical,
+                    physics: const ClampingScrollPhysics(),
                     child: SingleChildScrollView(
-                      controller: _verticalScrollController,
-                      scrollDirection: Axis.vertical,
+                      controller: _horizontalScrollController,
+                      scrollDirection: Axis.horizontal,
                       physics: const ClampingScrollPhysics(),
-                      child: SingleChildScrollView(
-                        controller: _horizontalScrollController,
-                        scrollDirection: Axis.horizontal,
-                        physics: const ClampingScrollPhysics(),
-                        child: Container(
-                          constraints: BoxConstraints(
-                            minWidth: constraints.maxWidth,
-                            minHeight: constraints.maxHeight,
-                          ),
-                          alignment: Alignment.center,
-                          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
-                          child: _buildLayoutMode(
-                            navState,
-                            docState,
-                            annoState,
-                            effectiveScale,
-                            dpr,
-                            zoomState.upscaleFactor,
-                          ),
+                      child: Container(
+                        constraints: BoxConstraints(
+                          minWidth: constraints.maxWidth,
+                          minHeight: constraints.maxHeight,
+                        ),
+                        alignment: Alignment.center,
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 24.0),
+                        child: _buildLayoutMode(
+                          navState,
+                          docState,
+                          annoState,
+                          effectiveScale,
+                          dpr,
+                          zoomState.upscaleFactor,
                         ),
                       ),
                     ),
@@ -329,6 +394,7 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
     int rotation,
     double upscaleFactor,
   ) {
+    final theme = Theme.of(context);
     // Base A4 dimensions in PDF points
     const baseWidth = 595.0;
     const baseHeight = 842.0;
@@ -420,66 +486,363 @@ class _PdfCanvasViewState extends ConsumerState<PdfCanvasView> {
                 ),
               ),
 
-              // 3. Active Drawing / Gesture Layer
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onPanStart: annoState.activeTool == AnnotationTool.select
-                      ? null
-                      : (details) {
-                          setState(() {
-                            _dragStart = details.localPosition;
-                            _dragCurrent = details.localPosition;
-                            if (annoState.activeTool == AnnotationTool.ink) {
-                              _activeInkPoints.clear();
-                              _activeInkPoints.add(DrawingPoint(
-                                details.localPosition.dx / scale,
-                                details.localPosition.dy / scale,
-                              ));
-                            }
-                          });
-                        },
-                  onPanUpdate: annoState.activeTool == AnnotationTool.select
-                      ? null
-                      : (details) {
-                          setState(() {
-                            _dragCurrent = details.localPosition;
-                            if (annoState.activeTool == AnnotationTool.ink) {
-                              _activeInkPoints.add(DrawingPoint(
-                                details.localPosition.dx / scale,
-                                details.localPosition.dy / scale,
-                              ));
-                            }
-                          });
-                        },
-                  onPanEnd: annoState.activeTool == AnnotationTool.select
-                      ? null
-                      : (details) {
-                          if (_dragStart != null && _dragCurrent != null) {
-                            _finishAnnotation(pageNum, scale, annoState, docState);
+              // 3. Interactive Selectable Text Layer (Active when Select tool is chosen)
+              if (annoState.activeTool == AnnotationTool.select)
+                Positioned.fill(
+                  child: _buildSelectableTextLayer(
+                    pageNum: pageNum,
+                    pageSize: pageSize,
+                    scale: scale,
+                    theme: theme,
+                    docState: docState,
+                  ),
+                ),
+
+              // 4. Active Drawing / Gesture Layer (Active when drawing/annotating)
+              if (annoState.activeTool != AnnotationTool.select)
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onScaleStart: (details) {
+                      if (details.pointerCount >= 2) {
+                        // Touch screen multi-finger pinch: cancel any drawing stroke
+                        setState(() {
+                          _dragStart = null;
+                          _dragCurrent = null;
+                          _activeInkPoints.clear();
+                        });
+                        _basePinchScale = scale;
+                        return;
+                      }
+                      setState(() {
+                        _dragStart = details.localFocalPoint;
+                        _dragCurrent = details.localFocalPoint;
+                        if (annoState.activeTool == AnnotationTool.ink) {
+                          _activeInkPoints.clear();
+                          _activeInkPoints.add(DrawingPoint(
+                            details.localFocalPoint.dx / scale,
+                            details.localFocalPoint.dy / scale,
+                          ));
+                        }
+                      });
+                    },
+                    onScaleUpdate: (details) {
+                      if (details.pointerCount >= 2) {
+                        // Pinch-to-zoom even while in annotation mode on touch screen
+                        final targetZoom = (_basePinchScale * details.scale).clamp(0.25, 5.0);
+                        ref.read(zoomProvider.notifier).setZoom(targetZoom);
+                        return;
+                      }
+                      if (_dragStart != null) {
+                        setState(() {
+                          _dragCurrent = details.localFocalPoint;
+                          if (annoState.activeTool == AnnotationTool.ink) {
+                            _activeInkPoints.add(DrawingPoint(
+                              details.localFocalPoint.dx / scale,
+                              details.localFocalPoint.dy / scale,
+                            ));
                           }
-                          setState(() {
-                            _dragStart = null;
-                            _dragCurrent = null;
-                            _activeInkPoints.clear();
-                          });
-                        },
-                  child: CustomPaint(
-                    painter: _ActiveDrawingPainter(
-                      tool: annoState.activeTool,
-                      start: _dragStart,
-                      current: _dragCurrent,
-                      inkPoints: _activeInkPoints,
-                      color: annoState.selectedColor,
-                      strokeWidth: annoState.strokeWidth,
-                      scale: scale,
+                        });
+                      }
+                    },
+                    onScaleEnd: (details) {
+                      if (details.pointerCount >= 2) return;
+                      if (_dragStart != null && _dragCurrent != null) {
+                        _finishAnnotation(pageNum, scale, annoState, docState);
+                      }
+                      setState(() {
+                        _dragStart = null;
+                        _dragCurrent = null;
+                        _activeInkPoints.clear();
+                      });
+                    },
+                    child: CustomPaint(
+                      painter: _ActiveDrawingPainter(
+                        tool: annoState.activeTool,
+                        start: _dragStart,
+                        current: _dragCurrent,
+                        inkPoints: _activeInkPoints,
+                        color: annoState.selectedColor,
+                        strokeWidth: annoState.strokeWidth,
+                        scale: scale,
+                      ),
                     ),
                   ),
                 ),
+
+              // 5. Quick Copy Page Floating Action
+              Positioned(
+                top: 8,
+                right: 8,
+                child: _buildCopyPageBadge(pageNum, theme),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSelectableTextLayer({
+    required int pageNum,
+    required Size pageSize,
+    required double scale,
+    required ThemeData theme,
+    required DocumentState docState,
+  }) {
+    final cachedLines = _pageLinesCache[pageNum];
+    final cachedText = _pageTextCache[pageNum];
+
+    if (cachedLines == null && cachedText == null) {
+      return FutureBuilder<List<PdfTextLine>>(
+        future: docState.engine.extractPageLines(pageNum),
+        builder: (context, snapshot) {
+          final lines = snapshot.data ?? [];
+          if (lines.isNotEmpty) {
+            _pageLinesCache[pageNum] = lines;
+            _pageTextCache[pageNum] = lines.map((l) => l.text).join('\n').trim();
+          }
+          return _buildTextSelectionWidget(
+            pageNum: pageNum,
+            pageSize: pageSize,
+            scale: scale,
+            theme: theme,
+            lines: lines,
+            pageText: _pageTextCache[pageNum] ?? '',
+          );
+        },
+      );
+    }
+
+    return _buildTextSelectionWidget(
+      pageNum: pageNum,
+      pageSize: pageSize,
+      scale: scale,
+      theme: theme,
+      lines: cachedLines ?? [],
+      pageText: cachedText ?? '',
+    );
+  }
+
+  Widget _buildTextSelectionWidget({
+    required int pageNum,
+    required Size pageSize,
+    required double scale,
+    required ThemeData theme,
+    required List<PdfTextLine> lines,
+    required String pageText,
+  }) {
+    final displayLines = lines.isNotEmpty
+        ? lines
+        : (pageText.trim().isNotEmpty
+            ? pageText.trim().split('\n').map((t) => PdfTextLine(text: t)).toList()
+            : <PdfTextLine>[]);
+
+    if (displayLines.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final fullWidth = pageSize.width * scale;
+    final fullHeight = pageSize.height * scale;
+
+    return Theme(
+      data: theme.copyWith(
+        textSelectionTheme: TextSelectionThemeData(
+          selectionColor: theme.colorScheme.primary.withValues(alpha: 0.32),
+          selectionHandleColor: theme.colorScheme.primary,
+        ),
+      ),
+      child: SelectionArea(
+        key: ValueKey('page_selection_${pageNum}_$scale'),
+        contextMenuBuilder: (context, selectableRegionState) {
+          return _buildTextContextMenu(context, selectableRegionState, pageNum);
+        },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.text,
+          child: Container(
+            width: fullWidth,
+            height: fullHeight,
+            color: Colors.transparent,
+            padding: EdgeInsets.symmetric(
+              horizontal: (fullWidth * 0.08).clamp(16.0, 54.0),
+              vertical: (fullHeight * 0.05).clamp(16.0, 50.0),
+            ),
+            child: ClipRect(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: displayLines.map((line) {
+                  final text = line.text;
+                  final isHeading = (text.length < 45 && text == text.toUpperCase() && RegExp(r'[A-Z]').hasMatch(text)) || line.fontSize >= 18;
+                  final effectiveFontSize = isHeading
+                      ? (line.fontSize * 0.9 * scale).clamp(12.0, 36.0)
+                      : (line.fontSize * 0.95 * scale).clamp(9.0, 24.0);
+
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: (isHeading ? 8.0 : 4.0) * scale,
+                    ),
+                    child: Text(
+                      text,
+                      style: TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: effectiveFontSize,
+                        fontWeight: isHeading ? FontWeight.bold : FontWeight.normal,
+                        height: 1.35,
+                        color: Colors.transparent,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextContextMenu(
+    BuildContext context,
+    SelectableRegionState selectableRegionState,
+    int pageNum,
+  ) {
+    final buttonItems = <ContextMenuButtonItem>[
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.copy,
+        onPressed: () {
+          selectableRegionState.copySelection(SelectionChangedCause.toolbar);
+          selectableRegionState.hideToolbar();
+          _showToast('Copied selection to clipboard');
+        },
+      ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.selectAll,
+        onPressed: () {
+          selectableRegionState.selectAll(SelectionChangedCause.toolbar);
+        },
+      ),
+      ContextMenuButtonItem(
+        label: 'Copy Page $pageNum Text',
+        onPressed: () {
+          selectableRegionState.hideToolbar();
+          _copyPageTextToClipboard(pageNum);
+        },
+      ),
+      ContextMenuButtonItem(
+        label: 'Highlight Selection',
+        onPressed: () {
+          selectableRegionState.hideToolbar();
+          _highlightSelection(pageNum);
+        },
+      ),
+    ];
+
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: selectableRegionState.contextMenuAnchors,
+      buttonItems: buttonItems,
+    );
+  }
+
+  Widget _buildCopyPageBadge(int pageNum, ThemeData theme) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoveredPage = pageNum),
+      onExit: (_) => setState(() => _hoveredPage = null),
+      child: AnimatedOpacity(
+        opacity: _hoveredPage == pageNum ? 1.0 : 0.45,
+        duration: const Duration(milliseconds: 200),
+        child: Tooltip(
+          message: 'Copy all text on Page $pageNum to clipboard',
+          child: Material(
+            color: theme.colorScheme.surface.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(16),
+            elevation: 2,
+            shadowColor: Colors.black26,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => _copyPageTextToClipboard(pageNum),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.copy_rounded, size: 13, color: theme.colorScheme.primary),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Copy Page',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _copyPageTextToClipboard(int pageNum) {
+    String textToCopy = _pageTextCache[pageNum]?.trim() ?? '';
+    if (textToCopy.isEmpty) {
+      final docState = ref.read(documentProvider);
+      docState.engine.extractText(pageNum).then((extracted) {
+        if (!mounted) return;
+        if (extracted.trim().isNotEmpty) {
+          _pageTextCache[pageNum] = extracted.trim();
+          Clipboard.setData(ClipboardData(text: extracted.trim()));
+          final count = extracted.trim().split(RegExp(r'\s+')).length;
+          _showToast('Copied Page $pageNum text ($count words) to clipboard');
+        } else {
+          _showToast('No text found on Page $pageNum');
+        }
+      });
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: textToCopy));
+    final count = textToCopy.split(RegExp(r'\s+')).length;
+    _showToast('Copied Page $pageNum text ($count words) to clipboard');
+  }
+
+  void _highlightSelection(int pageNum) {
+    final docState = ref.read(documentProvider);
+    final docPath = docState.currentPath ?? 'sample.pdf';
+    final annoState = ref.read(annotationProvider);
+
+    final highlightAnno = AnnotationModel(
+      id: const Uuid().v4(),
+      documentPath: docPath,
+      pageNumber: pageNum,
+      type: AnnotationType.highlight,
+      color: annoState.selectedColor != Colors.transparent ? annoState.selectedColor : Colors.amber,
+      opacity: 0.45,
+      rect: const Rect.fromLTWH(40, 60, 400, 28),
+    );
+    ref.read(annotationProvider.notifier).addAnnotation(highlightAnno);
+    _showToast('Added highlight annotation to Page $pageNum');
+  }
+
+  void _showToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
+            Flexible(child: Text(message, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.only(bottom: 24, left: 24, right: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }

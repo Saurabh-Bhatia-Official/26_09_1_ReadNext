@@ -47,21 +47,25 @@ class OcrService {
         inputBytes[3] == 0x46;   // F
 
     if (isPdf) {
-      final streamPages = PdfConverterService.extractPagesFromPdfBytes(inputBytes);
-      if (streamPages.isNotEmpty && streamPages.any((s) => s.trim().isNotEmpty)) {
-        for (int p = 1; p <= streamPages.length; p++) {
-          final text = streamPages[p - 1].trim();
-          final lines = text.split(RegExp(r'[\r\n]+')).where((s) => s.trim().isNotEmpty).toList();
-          results.add(OcrPageResult(
-            pageNumber: p,
-            extractedText: text.isNotEmpty ? text : '[Document Page $p]',
-            confidence: 0.98,
-            language: language,
-            lines: lines.isNotEmpty ? lines : ['Document Page $p'],
-          ));
+      if (!PdfConverterService.isPdfEncrypted(inputBytes)) {
+        final streamPages = PdfConverterService.extractPagesFromPdfBytes(inputBytes);
+        if (streamPages.isNotEmpty &&
+            streamPages.every((p) => p.trim().isEmpty || PdfConverterService.isCleanReadableText(p)) &&
+            streamPages.any((p) => p.trim().length >= 10 && PdfConverterService.isCleanReadableText(p))) {
+          for (int p = 1; p <= streamPages.length; p++) {
+            final text = streamPages[p - 1].trim();
+            final lines = text.split(RegExp(r'[\r\n]+')).where((s) => s.trim().isNotEmpty).toList();
+            results.add(OcrPageResult(
+              pageNumber: p,
+              extractedText: text.isNotEmpty ? text : '[Document Page $p]',
+              confidence: 0.98,
+              language: language,
+              lines: lines.isNotEmpty ? lines : ['Document Page $p'],
+            ));
+          }
+          if (onProgress != null) onProgress(1.0);
+          return results;
         }
-        if (onProgress != null) onProgress(1.0);
-        return results;
       }
 
       try {
@@ -97,6 +101,10 @@ class OcrService {
             language: language,
           );
 
+          final streamPages = !PdfConverterService.isPdfEncrypted(inputBytes)
+              ? PdfConverterService.extractPagesFromPdfBytes(inputBytes)
+              : <String>[];
+
           for (int p = 1; p <= total; p++) {
             final pageImgPath = (p - 1 < pageImgPaths.length) ? pageImgPaths[p - 1] : '';
             final ocrRun = ocrMap[pageImgPath] ??
@@ -115,8 +123,8 @@ class OcrService {
               text = ocrRun.text.trim();
               lines = ocrRun.lines.where((l) => l.trim().isNotEmpty).toList();
               confidence = 0.98;
-            } else if (streamText.isNotEmpty) {
-              // Stream text fallback if visual OCR detected no raster text
+            } else if (streamText.isNotEmpty && PdfConverterService.isCleanReadableText(streamText)) {
+              // Stream text fallback only if genuinely clean & readable
               text = streamText;
               lines = text.split(RegExp(r'[\r\n]+')).where((s) => s.trim().isNotEmpty).toList();
               confidence = 0.96;
@@ -147,7 +155,8 @@ class OcrService {
         final streamPages = PdfConverterService.extractPagesFromPdfBytes(inputBytes);
         if (streamPages.isNotEmpty) {
           for (int p = 1; p <= streamPages.length; p++) {
-            final text = streamPages[p - 1].trim();
+            final raw = streamPages[p - 1].trim();
+            final text = PdfConverterService.sanitizeTextToReadable(raw);
             final lines = text.split(RegExp(r'[\r\n]+')).where((s) => s.trim().isNotEmpty).toList();
             results.add(OcrPageResult(
               pageNumber: p,

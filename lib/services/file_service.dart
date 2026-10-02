@@ -49,15 +49,65 @@ class FileService {
     required Uint8List bytes,
     String? dialogTitle,
   }) async {
+    return saveExportFile(
+      fileName: fileName,
+      bytes: bytes,
+      extension: 'pdf',
+      mimeType: 'application/pdf',
+      dialogTitle: dialogTitle ?? 'Save PDF Document',
+    );
+  }
+
+  static Future<String?> saveExportFile({
+    required String fileName,
+    required Uint8List bytes,
+    required String extension,
+    required String mimeType,
+    String? dialogTitle,
+  }) async {
     final uri = await FilePicker.saveFile(
       fileName: fileName,
       bytes: bytes,
-      dialogTitle: dialogTitle ?? 'Save PDF Document',
-      mimeType: 'application/pdf',
+      dialogTitle: dialogTitle ?? 'Save File',
+      mimeType: mimeType,
       type: FileType.custom,
-      allowedExtensions: ['pdf'],
+      allowedExtensions: [extension],
     );
-    return uri?.toFilePath();
+
+    if (uri == null) return null;
+
+    String? path;
+    try {
+      if (uri.scheme == 'file') {
+        path = uri.toFilePath();
+      } else if (uri.path.isNotEmpty) {
+        path = uri.path;
+      }
+    } catch (_) {
+      path = uri.toString();
+    }
+
+    if (path != null) {
+      try {
+        final f = File(path);
+        if (!await f.exists() || await f.length() == 0) {
+          await f.writeAsBytes(bytes);
+        }
+      } catch (_) {}
+    }
+    return path;
+  }
+
+  static Future<void> openFileOrFolder(String filePath) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('explorer.exe', ['/select,', filePath]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', ['-R', filePath]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [p.dirname(filePath)]);
+      }
+    } catch (_) {}
   }
 
   static Future<Uint8List> loadSamplePdf() async {

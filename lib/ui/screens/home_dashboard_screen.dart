@@ -30,6 +30,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen> {
     final theme = Theme.of(context);
     final settingsState = ref.watch(settingsProvider);
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     return DropTarget(
       onDragEntered: (_) => setState(() => _isDragging = true),
       onDragExited: (_) => setState(() => _isDragging = false),
@@ -45,14 +48,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen> {
       },
       child: Scaffold(
         body: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          padding: EdgeInsets.symmetric(horizontal: isMobile ? 16 : 32, vertical: isMobile ? 16 : 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Hero Banner
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(28),
+                padding: EdgeInsets.all(isMobile ? 18 : 28),
                 decoration: BoxDecoration(
                   gradient: settingsState.themeMode == AppThemeMode.corporate
                       ? const LinearGradient(
@@ -207,7 +210,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Quick Actions', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  Flexible(
+                    child: Text(
+                      'Quick Actions',
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   TextButton.icon(
                     icon: const Icon(Icons.apps, size: 18),
                     label: const Text('View All Tools'),
@@ -293,7 +303,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Recent Documents', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  Flexible(
+                    child: Text(
+                      'Recent Documents',
+                      style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   if (settingsState.recentDocuments.isNotEmpty)
                     TextButton(
                       child: const Text('View All'),

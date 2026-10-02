@@ -1,12 +1,12 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import '../../../services/file_service.dart';
 import '../../../services/pdf/pdf_converter_service.dart';
+import '../../../state/document_provider.dart';
 import '../../../state/queue_provider.dart';
 
 class ConverterToolView extends ConsumerStatefulWidget {
@@ -40,6 +40,17 @@ class _ConverterToolViewState extends ConsumerState<ConverterToolView> with Sing
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this, initialIndex: widget.initialTabIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final docState = ref.read(documentProvider);
+      if (docState.currentPath != null && File(docState.currentPath!).existsSync()) {
+        if (mounted) {
+          setState(() {
+            _officePdfPath ??= docState.currentPath;
+            _pdfToImgPath ??= docState.currentPath;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -503,22 +514,26 @@ class _ConverterToolViewState extends ConsumerState<ConverterToolView> with Sing
         mime = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
       }
 
-      final uri = await FilePicker.saveFile(
+      final savePath = await FileService.saveExportFile(
         fileName: '$baseName.$extension',
         bytes: outBytes,
-        dialogTitle: 'Save ${_officeTarget.toUpperCase()} Document',
+        extension: extension,
         mimeType: mime,
-        type: FileType.custom,
-        allowedExtensions: [extension],
+        dialogTitle: 'Save ${_officeTarget.toUpperCase()} Document',
       );
-
-      final savePath = uri?.toFilePath();
 
       if (savePath != null) {
         ref.read(queueProvider.notifier).completeTask(taskId, outputPath: savePath, successMessage: 'Converted to $extension successfully.');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Exported document to $savePath')),
+            SnackBar(
+              content: Text('Exported $extension document to $savePath'),
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'Open',
+                onPressed: () => FileService.openFileOrFolder(savePath),
+              ),
+            ),
           );
         }
       } else {

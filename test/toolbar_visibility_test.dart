@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:read_next/data/models/bookmark_model.dart';
 import 'package:read_next/data/models/pdf_document_meta.dart';
 import 'package:read_next/services/pdf/i_pdf_engine.dart';
+import 'package:read_next/services/pdf/pdf_converter_service.dart';
 import 'package:read_next/state/document_provider.dart';
 import 'package:read_next/ui/widgets/toolbar/main_toolbar.dart';
 
@@ -23,6 +24,8 @@ class FakePdfEngine implements IPdfEngine {
   Future<void> close() async {}
   @override
   Future<String> extractText(int pageNumber) async => '';
+  @override
+  Future<List<PdfTextLine>> extractPageLines(int pageNumber) async => [];
   @override
   Future<List<OutlineItemModel>> getOutline() async => [];
   @override

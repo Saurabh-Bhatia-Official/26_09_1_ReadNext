@@ -43,10 +43,15 @@ class _NavigationSidebarState extends ConsumerState<NavigationSidebar> {
       return const SizedBox.shrink();
     }
 
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 700;
+    final sidebarWidth = isMobile ? (screenWidth * 0.85).clamp(240.0, 300.0) : 300.0;
+
     return Material(
       color: theme.cardTheme.color ?? theme.colorScheme.surface,
+      elevation: isMobile ? 8 : 0,
       child: SizedBox(
-        width: 300,
+        width: sidebarWidth,
         child: Container(
           decoration: BoxDecoration(
             border: Border(
@@ -71,6 +76,13 @@ class _NavigationSidebarState extends ConsumerState<NavigationSidebar> {
                     _tabIcon(2, Icons.bookmark_border, 'Bookmarks'),
                     _tabIcon(3, Icons.comment_outlined, 'Annotations'),
                     _tabIcon(4, Icons.search, 'Search Results'),
+                    if (isMobile)
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        tooltip: 'Close Sidebar',
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => ref.read(settingsProvider.notifier).toggleSidebar(),
+                      ),
                   ],
                 ),
               ),
@@ -135,7 +147,12 @@ class _NavigationSidebarState extends ConsumerState<NavigationSidebar> {
         final isSelected = navState.currentPage == pageNum;
 
         return GestureDetector(
-          onTap: () => ref.read(navigationProvider.notifier).setPage(pageNum),
+          onTap: () {
+            ref.read(navigationProvider.notifier).setPage(pageNum);
+            if (MediaQuery.of(context).size.width < 700) {
+              ref.read(settingsProvider.notifier).toggleSidebar();
+            }
+          },
           child: Container(
             margin: const EdgeInsets.only(bottom: 16),
             padding: const EdgeInsets.all(6),

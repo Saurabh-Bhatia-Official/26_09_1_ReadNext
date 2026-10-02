@@ -5,6 +5,7 @@ import 'package:pdfx/pdfx.dart' as pfx;
 import '../../data/models/pdf_document_meta.dart';
 import '../../data/models/bookmark_model.dart';
 import 'i_pdf_engine.dart';
+import 'pdf_converter_service.dart';
 
 class PdfxEngineImpl implements IPdfEngine {
   pfx.PdfDocument? _document;
@@ -12,6 +13,7 @@ class PdfxEngineImpl implements IPdfEngine {
   Uint8List? _currentBytes;
   PdfDocumentMeta _metadata = PdfDocumentMeta.empty();
   final Map<int, String> _extractedTextCache = {};
+  final Map<int, List<PdfTextLine>> _extractedLinesCache = {};
   final Map<int, Size> _dimensionsCache = {};
 
   @override
@@ -80,6 +82,7 @@ class PdfxEngineImpl implements IPdfEngine {
     _currentBytes = null;
     _metadata = PdfDocumentMeta.empty();
     _extractedTextCache.clear();
+    _extractedLinesCache.clear();
     _dimensionsCache.clear();
   }
 
@@ -124,6 +127,11 @@ class PdfxEngineImpl implements IPdfEngine {
   @override
   Future<String> extractText(int pageNumber) async {
     return _extractedTextCache[pageNumber] ?? '';
+  }
+
+  @override
+  Future<List<PdfTextLine>> extractPageLines(int pageNumber) async {
+    return _extractedLinesCache[pageNumber] ?? [];
   }
 
   @override
@@ -180,40 +188,55 @@ class PdfxEngineImpl implements IPdfEngine {
   Future<void> _indexDocumentText() async {
     if (_currentBytes == null) return;
     try {
-      final rawString = String.fromCharCodes(_currentBytes!);
-      // Extract text within BT ... ET blocks or parentheses in streams
-      final streamRegex = RegExp(r'stream[\r\n]+([\s\S]*?)[\r\n]+endstream');
-      final textRegex = RegExp(r'\((.*?)\)');
-
-      final streams = streamRegex.allMatches(rawString);
-      final StringBuffer fullDocText = StringBuffer();
-
-      for (final s in streams) {
-        final streamContent = s.group(1) ?? '';
-        final textMatches = textRegex.allMatches(streamContent);
-        for (final tm in textMatches) {
-          final t = tm.group(1);
-          if (t != null && t.length > 1 && !t.startsWith('/')) {
-            fullDocText.write('$t ');
-          }
-        }
+      final isEnc = PdfConverterService.isPdfEncrypted(_currentBytes!);
+      List<List<PdfTextLine>> pageLines = [];
+      if (!isEnc) {
+        pageLines = PdfConverterService.extractPageLinesFromPdfBytes(_currentBytes!);
       }
 
-      final docText = fullDocText.toString();
-      final words = docText.split(RegExp(r'\s+'));
-      final wordsPerPage = (words.length / (pageCount > 0 ? pageCount : 1)).ceil();
+      final bool hasCleanText = pageLines.isNotEmpty && pageLines.any((lines) =>
+          lines.isNotEmpty && PdfConverterService.isCleanReadableText(lines.map((l) => l.text).join(' ')));
 
-      for (int i = 1; i <= pageCount; i++) {
-        final startIdx = (i - 1) * wordsPerPage;
-        final endIdx = (startIdx + wordsPerPage).clamp(0, words.length);
-        if (startIdx < words.length) {
-          _extractedTextCache[i] = words.sublist(startIdx, endIdx).join(' ');
-        } else {
+      if (hasCleanText) {
+        for (int i = 1; i <= pageCount; i++) {
+          if (i - 1 < pageLines.length && pageLines[i - 1].isNotEmpty) {
+            final sorted = List<PdfTextLine>.from(pageLines[i - 1]);
+            sorted.sort((a, b) => b.y.compareTo(a.y));
+            _extractedLinesCache[i] = sorted;
+            _extractedTextCache[i] = sorted.map((l) => l.text).join('\n').trim();
+          } else {
+            _extractedLinesCache[i] = [PdfTextLine(text: 'Page $i Content')];
+            _extractedTextCache[i] = 'Page $i Content';
+          }
+        }
+      } else {
+        // PDF is encrypted or stream text contains unmapped font glyphs/ciphertext.
+        // Fallback to decrypted extraction asynchronously so initial UI remains responsive.
+        for (int i = 1; i <= pageCount; i++) {
+          _extractedLinesCache[i] = [PdfTextLine(text: 'Page $i Content')];
           _extractedTextCache[i] = 'Page $i Content';
         }
+
+        PdfConverterService.extractDecryptedPagesFromPdf(pdfBytes: _currentBytes!).then((decPages) {
+          for (int i = 1; i <= pageCount; i++) {
+            if (i - 1 < decPages.length && decPages[i - 1].isNotEmpty) {
+              final text = decPages[i - 1].trim();
+              final lines = text.split(RegExp(r'[\r\n]+')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+              final lineObjects = <PdfTextLine>[];
+              double curY = 800.0;
+              for (final l in lines) {
+                lineObjects.add(PdfTextLine(text: l, x: 40.0, y: curY, fontSize: 12.0));
+                curY -= 20.0;
+              }
+              _extractedLinesCache[i] = lineObjects;
+              _extractedTextCache[i] = text;
+            }
+          }
+        }).catchError((_) {});
       }
     } catch (e) {
       for (int i = 1; i <= pageCount; i++) {
+        _extractedLinesCache[i] = [PdfTextLine(text: 'Page $i')];
         _extractedTextCache[i] = 'Page $i';
       }
     }

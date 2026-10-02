@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../data/models/pdf_document_meta.dart';
 import '../../data/models/bookmark_model.dart';
+import 'pdf_converter_service.dart';
 
 class SearchMatch {
   final int pageNumber;
@@ -28,6 +29,7 @@ abstract class IPdfEngine {
   Future<Size> getPageDimensions(int pageNumber);
   Future<Uint8List?> renderPageThumbnail(int pageNumber, {int width = 200, int height = 300});
   Future<String> extractText(int pageNumber);
+  Future<List<PdfTextLine>> extractPageLines(int pageNumber) async => [];
   Future<List<SearchMatch>> search(String query, {bool caseSensitive = false, bool wholeWord = false});
   Future<List<OutlineItemModel>> getOutline();
   

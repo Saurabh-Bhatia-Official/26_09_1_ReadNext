@@ -59,74 +59,153 @@ class _ToolsHubScreenState extends ConsumerState<ToolsHubScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFF1E88E5), Color(0xFF0D47A1)],
-                          ),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.grid_view, color: Colors.white, size: 20),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'ReadNext Tools Hub',
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: -0.3,
+                  LayoutBuilder(
+                    builder: (context, headerConstraints) {
+                      final isNarrow = headerConstraints.maxWidth < 620;
+                      if (isNarrow) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [Color(0xFF1E88E5), Color(0xFF0D47A1)],
+                                    ),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(Icons.grid_view, color: Colors.white, size: 20),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'ReadNext Tools Hub',
+                                        style: theme.textTheme.titleMedium?.copyWith(
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: -0.3,
+                                        ),
+                                      ),
+                                      Text(
+                                        'All 20 offline PDF tools in one place',
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _searchController,
+                              onChanged: (val) => setState(() => _searchQuery = val.trim()),
+                              decoration: InputDecoration(
+                                hintText: 'Search tools (e.g. merge, compress)...',
+                                hintStyle: TextStyle(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                                ),
+                                prefixIcon: const Icon(Icons.search, size: 18),
+                                suffixIcon: _searchQuery.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear, size: 16),
+                                        onPressed: () {
+                                          _searchController.clear();
+                                          setState(() => _searchQuery = '');
+                                        },
+                                      )
+                                    : null,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: theme.dividerColor),
+                                ),
+                                filled: true,
+                                fillColor: theme.cardColor,
+                              ),
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF1E88E5), Color(0xFF0D47A1)],
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(Icons.grid_view, color: Colors.white, size: 20),
                           ),
-                          Text(
-                            'All 20 offline PDF tools in one place',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'ReadNext Tools Hub',
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                              Text(
+                                'All 20 offline PDF tools in one place',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+
+                          // Search Input Box
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 300),
+                            child: TextField(
+                              controller: _searchController,
+                              onChanged: (val) => setState(() => _searchQuery = val.trim()),
+                              decoration: InputDecoration(
+                                hintText: 'Search tools (e.g. merge, compress)...',
+                                hintStyle: TextStyle(
+                                  fontSize: 12,
+                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                                ),
+                                prefixIcon: const Icon(Icons.search, size: 18),
+                                suffixIcon: _searchQuery.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear, size: 16),
+                                        onPressed: () {
+                                          _searchController.clear();
+                                          setState(() => _searchQuery = '');
+                                        },
+                                      )
+                                    : null,
+                                isDense: true,
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide(color: theme.dividerColor),
+                                ),
+                                filled: true,
+                                fillColor: theme.cardColor,
+                              ),
+                              style: const TextStyle(fontSize: 13),
                             ),
                           ),
                         ],
-                      ),
-                      const Spacer(),
-
-                      // Search Input Box
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 300),
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (val) => setState(() => _searchQuery = val.trim()),
-                          decoration: InputDecoration(
-                            hintText: 'Search tools (e.g. merge, compress)...',
-                            hintStyle: TextStyle(
-                              fontSize: 12,
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                            ),
-                            prefixIcon: const Icon(Icons.search, size: 18),
-                            suffixIcon: _searchQuery.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear, size: 16),
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      setState(() => _searchQuery = '');
-                                    },
-                                  )
-                                : null,
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10),
-                              borderSide: BorderSide(color: theme.dividerColor),
-                            ),
-                            filled: true,
-                            fillColor: theme.cardColor,
-                          ),
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
 
                   const SizedBox(height: 16),

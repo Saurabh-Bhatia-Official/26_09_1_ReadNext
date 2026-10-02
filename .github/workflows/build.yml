@@ -21,26 +21,12 @@ on:
         description: 'Release Title'
         required: false
         type: string
-        default: 'ReadNext Official Release'
+        default: 'ReadNext'
       release_notes:
         description: 'Changelog / Release Notes'
         required: false
         type: string
-        default: |
-          ### ReadNext - Smart PDF Reader & Annotation Suite
-
-          #### Highlights
-          - **Smart PDF Reader & Viewer**: Smooth scrolling, page jump, fit-width/height, zoom controls.
-          - **All-in-One PDF Tool Hub**: Convert, merge, split, compress, watermark, protect, unlock, and manage pages.
-          - **Offline Neural OCR**: Extract text and generate searchable PDFs locally.
-          - **Cross-Platform Availability**: Windows, Linux, macOS, Android, and iOS.
-
-          #### Downloads
-          - **Windows**: `ReadNext-Setup-v1.0.0.exe` (Inno Setup wizard installer) or portable `.zip`
-          - **Linux**: `ReadNext-v1.0.0-Linux-x64.deb` or portable `.tar.gz`
-          - **macOS**: `ReadNext-macOS.dmg` or portable `.zip`
-          - **Android**: `ReadNext-Android.apk`
-          - **iOS**: `ReadNext-iOS-unsigned.ipa`
+        default: ''
       only_publish_existing:
         description: 'Publish from existing build artifacts (skips rebuilding)'
         required: false

@@ -243,13 +243,17 @@ class _SplashScreenState extends State<SplashScreen>
                                 children: [
                                   Icon(Icons.verified_user_outlined, size: 14, color: Color(0xFF0284C7)),
                                   SizedBox(width: 6),
-                                  Text(
-                                    'Enterprise Edition • 100% Client-Side Privacy',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF475569),
-                                      letterSpacing: 0.3,
+                                  Flexible(
+                                    child: Text(
+                                      'Enterprise Edition • Client-Side Privacy',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF475569),
+                                        letterSpacing: 0.3,
+                                      ),
                                     ),
                                   ),
                                 ],

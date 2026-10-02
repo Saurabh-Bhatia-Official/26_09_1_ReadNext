@@ -232,12 +232,25 @@ class _ViewerScreenState extends ConsumerState<ViewerScreen> {
                   // Central Workspace (Sidebar + Canvas, or Welcome Screen)
                   Expanded(
                     child: docState.hasDocument
-                        ? const Row(
-                            children: [
-                              NavigationSidebar(),
-                              Expanded(child: PdfCanvasView()),
-                            ],
-                          )
+                        ? (MediaQuery.of(context).size.width < 700
+                            ? Stack(
+                                children: [
+                                  const Positioned.fill(child: PdfCanvasView()),
+                                  if (settingsState.isSidebarOpen)
+                                    const Positioned(
+                                      top: 0,
+                                      bottom: 0,
+                                      left: 0,
+                                      child: NavigationSidebar(),
+                                    ),
+                                ],
+                              )
+                            : const Row(
+                                children: [
+                                  NavigationSidebar(),
+                                  Expanded(child: PdfCanvasView()),
+                                ],
+                              ))
                         : const WelcomeScreen(),
                   ),
                 ],
