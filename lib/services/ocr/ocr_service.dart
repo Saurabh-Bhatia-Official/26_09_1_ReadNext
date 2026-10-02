@@ -47,10 +47,26 @@ class OcrService {
         inputBytes[3] == 0x46;   // F
 
     if (isPdf) {
+      final streamPages = PdfConverterService.extractPagesFromPdfBytes(inputBytes);
+      if (streamPages.isNotEmpty && streamPages.any((s) => s.trim().isNotEmpty)) {
+        for (int p = 1; p <= streamPages.length; p++) {
+          final text = streamPages[p - 1].trim();
+          final lines = text.split(RegExp(r'[\r\n]+')).where((s) => s.trim().isNotEmpty).toList();
+          results.add(OcrPageResult(
+            pageNumber: p,
+            extractedText: text.isNotEmpty ? text : '[Document Page $p]',
+            confidence: 0.98,
+            language: language,
+            lines: lines.isNotEmpty ? lines : ['Document Page $p'],
+          ));
+        }
+        if (onProgress != null) onProgress(1.0);
+        return results;
+      }
+
       try {
         final doc = await pfx.PdfDocument.openData(inputBytes);
         final total = doc.pagesCount;
-        final streamPages = PdfConverterService.extractPagesFromPdfBytes(inputBytes);
 
         final tempDir = await Directory.systemTemp.createTemp('readnext_ocr_');
         final List<String> pageImgPaths = [];
